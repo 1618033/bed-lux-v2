@@ -10,13 +10,13 @@ from machine import Pin, I2C
 
 from queue import Queue
 from one_shot_timer import OneShotTimer
-from blec import BLEController
-from sensor_lux import SensorLUX
-from wlan_ap import APController
-from pin_monitor import PinMonitor
+from controllers.blec import BLEController
+from controllers.sensor_lux import SensorLUX
+from controllers.wlan_ap import APController
 from file_logger import FileLogger
-from status_led import StatusLED
-from motion_radar import MotionRadar
+from controllers.status_led import StatusLED
+from controllers.motion_radar import MotionRadar
+from drivers.veml7700 import VEML7700
 
 from defs import PIN_MOTION, _PIN_NAMES
 from defs import RGBLED_STATUS_BOOTED, RGBLED_STATUS_CONNECTED, RGBLED_STATUS_CONNECTING, RGBLED_STATUS_ERROR
@@ -48,7 +48,6 @@ lux_sensor: SensorLUX
 log = logging.getLogger("[Main]")
 log.setLevel(logging.DEBUG)
 
-pin_monitor: PinMonitor
 status_led: StatusLED
 
 sleep_mode: asyncio.Event
@@ -59,7 +58,7 @@ failed_task_name: Optional[str] = None
 def get_sensors_status() -> bytes:
     status = 0
     # status |= (pin_monitor.get_state(PIN_BUTTON)) << 0
-    status |= (pin_monitor.get_state(PIN_MOTION)) << 1
+    # status |= (pin_monitor.get_state(PIN_MOTION)) << 1
     # status |= (pin_monitor.get_state(PIN_AMBIENT_LIGHT)) << 2
     # status |= (pin_monitor.get_state(PIN_SENSE_LINE)) << 3
 
@@ -127,8 +126,9 @@ async def process_power_light_queue() -> None:
 
 @safe_call(log)
 def motion_event_handler(state: bool) -> None:
-    # ambient_light = pin_monitor.get_state(PIN_AMBIENT_LIGHT)
-    ambient_light = 0
+    ambient_light = lux_sensor.read_lux()
+
+    
     light_on_time_raw = cfg.get("light_on_time")
     if light_on_time_raw is None:
         log.error("light_on_time not configured")
@@ -138,7 +138,7 @@ def motion_event_handler(state: bool) -> None:
     if not state:
         return
 
-    if not ambient_light:
+    if ambient_light < 100:
         power_light(True)
 
     try:
@@ -286,7 +286,6 @@ def initialize_variables() -> None:
     global display_queue, power_light_queue, event_activate_wireless, button_press_start_ticks
     global timer_light, pin_monitor, flog, sleep_mode, status_led
 
-    pin_monitor = PinMonitor()
     event_activate_wireless = asyncio.ThreadSafeFlag()
     button_press_start_ticks = -1
     display_queue = Queue()
@@ -295,23 +294,10 @@ def initialize_variables() -> None:
     flog = FileLogger("log.txt", max_bytes=100_000, backups=2)
     sleep_mode = asyncio.Event()
 
-def initialize_pin_monitoring():
-    display_tags: dict = {
-        PIN_MOTION: "motion",
-    }
 
-    async def on_pin_state_change(pin_num: int, new_state: bool, prev_state: bool) -> None:
-        blec.notify(BLEC_NOTIFICATION_SENSORS, get_sensors_status())
-        log.debug("%s %s -> %s" % (_PIN_NAMES[pin_num], prev_state, new_state))
-        flog.debug("on_pin_state_change(): %s %s -> %s" % (_PIN_NAMES[pin_num], prev_state, new_state))
-        
-                        
-    pin_monitor.on_pin_state_change = on_pin_state_change
-
-    # pin_monitor.add_pin(PIN_BUTTON, callback=button_event_handler, debounce_ms=50, invert=True)
-    pin_monitor.add_pin(PIN_MOTION, callback=motion_event_handler, debounce_ms=50)
-    # pin_monitor.add_pin(PIN_AMBIENT_LIGHT, callback=ambient_light_event_handler, debounce_ms=50, invert=True)
-    # pin_monitor.add_pin(PIN_SENSE_LINE, callback=sense_line_event_handler, debounce_ms=50, invert=True)
+        # blec.notify(BLEC_NOTIFICATION_SENSORS, get_sensors_status())
+        # log.debug("%s %s -> %s" % (_PIN_NAMES[pin_num], prev_state, new_state))
+        # flog.debug("on_pin_state_change(): %s %s -> %s" % (_PIN_NAMES[pin_num], prev_state, new_state))
 
 def initialize_blec() -> None:    
     global blec
@@ -333,12 +319,8 @@ def initialize_lux_sensor() -> None:
     lux_sensor.start()
 
 
-@safe_async_call(log)
-async def motion_state_change(state: bool) -> None:
-    log.debug("Motion state changed: %s", state)
-
 def initialize_radar() -> None:
-    motion_radar.motion_state_change = motion_state_change
+    motion_radar.motion_event_handler = motion_event_handler
     motion_radar.initialize()
 
 
@@ -386,9 +368,12 @@ async def watch_task(coro, name: str) -> None:
         failed_task_name = name
         raise
 
+
 async def main() -> None:
     global last_task_exception, failed_task_name
     tasks: List[asyncio.Task[Any]] = []
+
+
     try:
         last_task_exception = None
         failed_task_name = None
@@ -397,10 +382,8 @@ async def main() -> None:
         initialize_variables()
         initialize_blec()
         initialize_apc()
-        initialize_pin_monitoring()
         initialize_lux_sensor()
         initialize_radar()
-
 
         flog.info("main(): Initialized")
         
@@ -410,7 +393,6 @@ async def main() -> None:
                 asyncio.create_task(watch_task(apc.start(), "apc.start")),
                 asyncio.create_task(watch_task(blec.start(), "blec.start")),
                 asyncio.create_task(watch_task(process_power_light_queue(), "process_power_light_queue")),
-                asyncio.create_task(watch_task(pin_monitor.start(poll_interval_ms=10), "pin_monitor.start")),
                 asyncio.create_task(watch_task(motion_radar.start(poll_interval_ms=10), "motion_radar.start")),
             ]
             await asyncio.sleep_ms(100)
@@ -467,7 +449,7 @@ async def main() -> None:
         try:
             await apc.stop()
             blec.stop(True)
-            pin_monitor.stop()
+            motion_radar.stop()
         except Exception as e:
             app_error("Error stopping services: %s" % e, e)
             log.exception("Error stopping services: %s" % e)

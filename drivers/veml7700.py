@@ -50,7 +50,7 @@ This package can be used in conjunction with the overall [SparkFun Qwiic Python 
 New to Qwiic? Take a look at the entire [SparkFun Qwiic ecosystem](https://www.sparkfun.com/qwiic).
 """
 
-from micropython_i2c import MicroPythonI2C
+from drivers.micropython_i2c import MicroPythonI2C
 import time
 
 # Define the device name and I2C addresses. These are set in the class defintion

@@ -3,8 +3,9 @@ from machine import Pin
 from defs import PIN_SCL, PIN_SDA, PIN_MOTION, PIN_LEDSTRIP_PWM, PIN_RGB_LED
 from defs import RGBLED_STATUS_BOOTING
 from helpers import log_memory_status
-from status_led import StatusLED
-from motion_radar import MotionRadar
+from controllers.status_led import StatusLED
+from controllers.motion_radar import MotionRadar
+
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - [%(levelname)s][BLX]%(name)s %(message)s")
 

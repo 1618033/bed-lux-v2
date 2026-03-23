@@ -44,7 +44,7 @@ class MotionRadar:
         self._motion_hold_time = motion_hold_time
         self._last_motion_ticks: Optional[int] = None
 
-    def motion_state_change(self, state: bool):
+    def motion_event_handler(self, state: bool):
         log.debug('self.motion')
 
         return
@@ -81,8 +81,8 @@ class MotionRadar:
         self._motion_state = motion_detected
 
         try:
-            if is_awaitable(self.motion_state_change(motion_detected)):
-                await self.motion_state_change(motion_detected)  # pyright: ignore[reportGeneralTypeIssues]
+            if is_awaitable(self.motion_event_handler(motion_detected)):
+                await self.motion_event_handler(motion_detected)  # pyright: ignore[reportGeneralTypeIssues]
         except Exception as e:
             log.error("Error in callback for MotionRadar.motion_detected: %s" % (e))
             raise

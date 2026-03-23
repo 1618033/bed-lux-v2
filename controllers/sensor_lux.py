@@ -29,14 +29,17 @@ class SensorLUX:
             log.error("VEML7700 sensor not found or failed to initialize")
             return False
 
+        dbg_msg = "VEML7700 sensor successfully initialized. "
         if self._gain is not None:
             self._sensor.set_gain(self._gain)
+            dbg_msg += "Gain = %0.2f, " % self._gain
 
         if self._integration_time is not None:
             self._sensor.set_integ_time(self._integration_time)
+            dbg_msg += "Integration time = %d." % self._integration_time
 
         self._initialized = True
-        log.debug("VEML7700 sensor successfully initialized")
+        log.debug(dbg_msg)
         return True
 
     def is_connected(self) -> bool:

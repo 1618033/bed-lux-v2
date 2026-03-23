@@ -28,7 +28,7 @@ from micropython import const
 PIN_SCL = const(1)
 PIN_SDA = const(2)
 
-PIN_LEDSTRIP_PWM = const(3)
+PIN_LEDSTRIP_PWM = const(7)
 PIN_MOTION = const(13)
 PIN_RGB_LED = const(21)
 
