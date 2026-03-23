@@ -1,0 +1,26 @@
+{
+  "include": [
+    "."
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.*"
+  ],
+  "typeshedPath": "./typings",
+  "extraPaths": [
+    "./typings/stdlib/asyncio",
+    "./typings/stdlib",
+    "./typings",
+    "./lib"
+  ],
+  "stubPath": "./typings",
+  "typeCheckingMode": "basic",
+  "reportMissingTypeStubs": false,
+  "pythonVersion": "3.10",
+  "pythonPlatform": "Linux",
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "none",
+  "defineConstant": { "TYPE_CHECKING": true },
+  "reportRedeclaration":"none"
+}
