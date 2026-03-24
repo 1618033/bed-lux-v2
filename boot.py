@@ -2,9 +2,10 @@ import network, bluetooth, time, logging, micropython, neopixel
 from machine import Pin
 from defs import PIN_SCL, PIN_SDA, PIN_MOTION, PIN_LEDSTRIP_PWM, PIN_RGB_LED
 from defs import RGBLED_STATUS_BOOTING
-from helpers import log_memory_status
+from mylib.helpers import log_memory_status
 from controllers.status_led import StatusLED
 from controllers.motion_radar import MotionRadar
+from controllers.led_strip import LEDStrip
 
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - [%(levelname)s][BLX]%(name)s %(message)s")
@@ -27,7 +28,7 @@ status_led = StatusLED(pin_rgb_led)
 
 status_led.status(RGBLED_STATUS_BOOTING, True)
 
-motion_radar = MotionRadar(baudrate=460800, motion_hold_time=1000)
+led_strip = LEDStrip()
 
 sta = network.WLAN(network.STA_IF)
 ap = network.WLAN(network.AP_IF)

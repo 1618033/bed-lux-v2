@@ -1,1 +1,1 @@
-{"light_on_time": 5, "hostname": "bed-lux-rod", "dimmer_level": 30}
+{"light_on_time": 5, "light_on_threshold": 10, "energy_threshold": 70, "hostname": "bed-lux-rod", "dimmer_level": 30}

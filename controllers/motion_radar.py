@@ -4,15 +4,13 @@ import logging
 import asyncio 
 import time
 
-from defs import Optional
+from defs import Any, Optional, List, Dict
 from machine import Pin, UART
 from drivers.hlk_ld2412 import HLKLD2412
-from helpers import is_awaitable, is_coroutine
-
+from mylib.helpers import is_awaitable, is_coroutine
 
 log = logging.getLogger("[MotionRadar]")
 log.setLevel(logging.DEBUG)
-
 
 class MotionRadar:
     def __init__(
@@ -25,6 +23,7 @@ class MotionRadar:
         uart_timeout: int = 100,
         uart_timeout_char: int = 10,
         motion_hold_time: int = 0,
+        energy_threshold: int = 70
     ) -> None:
         self._uart = UART(
             uart_id,
@@ -43,11 +42,11 @@ class MotionRadar:
         self._motion_state = False
         self._motion_hold_time = motion_hold_time
         self._last_motion_ticks: Optional[int] = None
+        self._last_report: Optional[Dict[str, Any]] = None
+        self._energy_threshold = energy_threshold
 
-    def motion_event_handler(self, state: bool):
-        log.debug('self.motion')
-
-        return
+    def motion_event_handler(self, state: bool, energies: List) -> None:
+        pass
 
     async def poll(self):
         report = self.read_report()
@@ -61,7 +60,7 @@ class MotionRadar:
         motion_detected = False
 
         for energy in report["moving_gate_energies"]:
-            if energy > 70:
+            if energy > self._energy_threshold:
                 motion_detected = True
                 self._last_motion_ticks = time.ticks_ms()
                 break
@@ -81,8 +80,9 @@ class MotionRadar:
         self._motion_state = motion_detected
 
         try:
-            if is_awaitable(self.motion_event_handler(motion_detected)):
-                await self.motion_event_handler(motion_detected)  # pyright: ignore[reportGeneralTypeIssues]
+            res = self.motion_event_handler(motion_detected, report['moving_gate_energies'])
+            if is_awaitable(res):
+                await res  # pyright: ignore[reportGeneralTypeIssues]
         except Exception as e:
             log.error("Error in callback for MotionRadar.motion_detected: %s" % (e))
             raise
@@ -106,8 +106,14 @@ class MotionRadar:
             log.error("LD2412 radar did not return firmware information")
 
         return self._initialized
-        
+    
+    def is_running(self):
+        return self._running
+
     async def start(self, poll_interval_ms=10):
+        if self._running:
+            return
+
         self._running = True
         log.info("LD2412 radar in monitoring mode. Polling every %dms" % poll_interval_ms)
         try:
@@ -132,14 +138,22 @@ class MotionRadar:
             raise OSError("LD2412 radar is not available")
         return self._radar.read_all_info()
 
+    def get_last_report(self) -> None | Dict[str, Any]:
+        return self._last_report
+
     def read_report(self, timeout_ms: Optional[int] = None):
         if not self._initialized and not self.start():
             raise OSError("LD2412 radar is not available")
-        return self._radar.read_report(timeout_ms=timeout_ms)
+        report = self._radar.read_report(timeout_ms=timeout_ms)
+        self._last_report = report
+        return report
 
     def is_motion_detected(self, timeout_ms: Optional[int] = None) -> bool:
         report = self.read_report(timeout_ms=timeout_ms)
         return bool(report and report.get("has_target"))
+
+    def set_energy_threshold(self, energy_threshold: int):
+        self._energy_threshold = energy_threshold
 
     @property
     def driver(self) -> HLKLD2412:

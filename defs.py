@@ -1,6 +1,6 @@
 from __future__ import annotations  # keeps annotations from being eagerly evaluated
 import logging, gc, micropython
-from helpers import log_memory_status
+from mylib.helpers import log_memory_status
 
 TYPE_CHECKING = False
 

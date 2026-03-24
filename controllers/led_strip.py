@@ -9,7 +9,7 @@ from asyncio import Event, Task
 
 
 log: logging.Logger = logging.getLogger("[LEDStrip]")
-log.setLevel(logging.INFO)
+log.setLevel(logging.DEBUG)
 
 
 class LEDStrip:
@@ -80,6 +80,8 @@ class LEDStrip:
     async def power(self, state: bool) -> None:
         if state == self._current_state:
             return
+        
+        self._current_state = state
         
         if self._worker is not None:
             self._interrupt_event.set()

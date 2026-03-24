@@ -1,22 +1,23 @@
 import asyncio
 import time
 import webrepl
-from helpers import is_coroutine, is_awaitable
+from boot import sta
+from mylib.helpers import is_coroutine, is_awaitable
 import logging
 
 from micropython import schedule
 from config import JSONConfig
 from machine import Pin, I2C
 
-from queue import Queue
-from one_shot_timer import OneShotTimer
+from mylib.queue import Queue
+from mylib.one_shot_timer import OneShotTimer
 from controllers.blec import BLEController
 from controllers.sensor_lux import SensorLUX
 from controllers.wlan_ap import APController
-from file_logger import FileLogger
+from mylib.file_logger import FileLogger
 from controllers.status_led import StatusLED
 from controllers.motion_radar import MotionRadar
-from drivers.veml7700 import VEML7700
+from controllers.led_strip import LEDStrip
 
 from defs import PIN_MOTION, _PIN_NAMES
 from defs import RGBLED_STATUS_BOOTED, RGBLED_STATUS_CONNECTED, RGBLED_STATUS_CONNECTING, RGBLED_STATUS_ERROR
@@ -29,7 +30,7 @@ if TYPE_CHECKING:
     pin_dimmer_control: Pin
     pin_blue_led: Pin
     status_led: StatusLED
-    motion_radar: MotionRadar
+    led_strip: LEDStrip
 
 event_activate_wireless: asyncio.ThreadSafeFlag
 button_press_start_ticks: int
@@ -44,109 +45,74 @@ apc: APController
 cfg: JSONConfig
 flog: FileLogger
 lux_sensor: SensorLUX
+motion_radar: MotionRadar
 
 log = logging.getLogger("[Main]")
 log.setLevel(logging.DEBUG)
-
-status_led: StatusLED
 
 sleep_mode: asyncio.Event
 last_task_exception: Optional[Exception] = None
 failed_task_name: Optional[str] = None
 
 @safe_call(log)
-def get_sensors_status() -> bytes:
-    status = 0
-    # status |= (pin_monitor.get_state(PIN_BUTTON)) << 0
-    # status |= (pin_monitor.get_state(PIN_MOTION)) << 1
-    # status |= (pin_monitor.get_state(PIN_AMBIENT_LIGHT)) << 2
-    # status |= (pin_monitor.get_state(PIN_SENSE_LINE)) << 3
-
-    return status.to_bytes(1, 'big')
-
-@safe_call(log)
-def power_light(turn_on: bool) -> None:
-    """Synchronous interface - queues request for async processing"""
-    power_light_queue.put_nowait(turn_on)
-
-def _irq_power_light_wrapper(turn_on: bool) -> None:
-    """IRQ-safe wrapper that schedules power_light for async execution"""
-    schedule(power_light, turn_on)
+def get_sensors_status() -> bytes | None:
+    status: bytes = b''
 
 
-async def power_light_async(turn_on: bool) -> None:
-    """Async version that can safely do blocking operations"""
-    async def toggle_light():
-        pin_dimmer_control.value(False)
-        await asyncio.sleep_ms(100)  # Non-blocking sleep
-        pin_dimmer_control.value(True)
+    led_strip_on = int(led_strip.is_on())
+    lux = int(lux_sensor.read_lux())
+    radar_report = motion_radar.get_last_report()
 
-    # light_on = pin_monitor.get_state(PIN_SENSE_LINE)
-    light_on = 0
+    energies = [0] * 14
+    if radar_report and "moving_gate_energies" in radar_report:
+        energies = radar_report["moving_gate_energies"]
+    else:
+        return None
 
-    if sleep_mode.is_set():
-        log.debug("Sleep mode is ON")
-        flog.debug("Sleep mode is ON")
-        return
+    status += led_strip_on.to_bytes(1, 'big')
+    status += lux.to_bytes(2, 'big')
+    status += bytes(energies)
+    
+    return status
 
-    try:
-        if turn_on and not light_on:
-            await toggle_light()
-            blec.trigger(BLEC_EVENT_LIGHT_STATE, chr(turn_on).encode())
-            log.info("Action | Turning light ON")
-            flog.info("power_light_async(): Turning light ON")
-        elif not turn_on and light_on:
-            await toggle_light()
-            blec.trigger(BLEC_EVENT_LIGHT_STATE, chr(turn_on).encode())
-            log.info("Action | Turning light OFF")
-            flog.info("power_light_async(): Turning light OFF")
 
-        elif turn_on and light_on:
-            log.debug("[power_light_async] Light already on")
-        elif not turn_on and not light_on:
-            log.debug("[power_light_async] Light already off")
-        else:
-            log.debug("[power_light_async] Unknown state")
-    except Exception as e:
-        app_error("Error setting light power to: %s" % e, e)
-        log.exception("Error setting light power to: %s" % e)
-
-async def process_power_light_queue() -> None:
-    """Process power light requests from the queue"""
-    while True:
-        try:
-            turn_on = await power_light_queue.get()
-            await power_light_async(turn_on)
-        except asyncio.CancelledError:
-            log.info("process_power_light_queue cancelled")
-            raise
-        except Exception as e:
-            app_error("Error processing power_light request: %s" % e, e)
-            log.exception("Error processing power_light request: %s" % e)
-
-@safe_call(log)
-def motion_event_handler(state: bool) -> None:
+@safe_async_call(log)
+async def power_led_strip(state: bool, energies: List) -> None:
     ambient_light = lux_sensor.read_lux()
 
-    
+    light_on_threshold = cfg.get("light_on_threshold")
+    if light_on_threshold is None:
+        log.error("light_on_time not configured")
+        return
+
     light_on_time_raw = cfg.get("light_on_time")
     if light_on_time_raw is None:
         log.error("light_on_time not configured")
         return
     light_on_time = light_on_time_raw * 1000
     
-    if not state:
+    if state == False:
+        log.debug("Turning LED strip off")
+        await led_strip.power(False)
+        timer_light.cancel()
+        blec.trigger(BLEC_EVENT_LIGHT_STATE, int(False).to_bytes(1, 'big'))
         return
 
-    if ambient_light < 100:
-        power_light(True)
+    if ambient_light < light_on_threshold:
+        log.debug("Turning LED strip on")
+        await led_strip.power(True)
+        blec.trigger(BLEC_EVENT_LIGHT_STATE, int(True).to_bytes(1, 'big'))
 
-    try:
-        #timer_light.start(light_on_time, lambda t: power_light(False))
-        timer_light.start(light_on_time, lambda t: _irq_power_light_wrapper(False))
-    except Exception as e:
-        app_error("Error initializing timer: %s" % e, e)
-        log.exception("Error initializing timer: %s" % e)
+        try:
+            timer_light.start(light_on_time, lambda t: power_led_strip(False, energies))
+        except Exception as e:
+            app_error("Error initializing timer: %s" % e, e)
+            log.exception("Error initializing timer: %s" % e)
+
+@safe_async_call(log)
+async def motion_event_handler(state: bool, energies: List) -> None:
+    if state == True:
+        await power_led_strip(state, energies)
 
 @safe_async_call(log)
 async def blec_cmd_callback(cmd: int, payload: bytes) -> None:
@@ -260,7 +226,7 @@ async def blec_on_start() -> None:
     
     status_sensors = get_sensors_status()
     if status_sensors is not None:
-        blec.set_characteristic_value(BLEC_CHARACTERISTIC_NOTIFICATION, chr(BLEC_NOTIFICATION_SENSORS).encode() + status_sensors)
+        blec.notify(BLEC_NOTIFICATION_SENSORS, status_sensors)
 
 @safe_async_call(log)
 async def blec_on_connect() -> None:
@@ -320,6 +286,9 @@ def initialize_lux_sensor() -> None:
 
 
 def initialize_radar() -> None:
+    global motion_radar
+    energy_threshold = cfg.get("energy_threshold")
+    motion_radar = MotionRadar(baudrate=460800, motion_hold_time=1000, energy_threshold=energy_threshold)
     motion_radar.motion_event_handler = motion_event_handler
     motion_radar.initialize()
 
@@ -380,10 +349,10 @@ async def main() -> None:
         load_config()
 
         initialize_variables()
-        initialize_blec()
-        initialize_apc()
         initialize_lux_sensor()
         initialize_radar()
+        initialize_blec()
+        initialize_apc()
 
         flog.info("main(): Initialized")
         
@@ -392,7 +361,6 @@ async def main() -> None:
                 asyncio.create_task(watch_task(status_led.start(), "status_led.start")),
                 asyncio.create_task(watch_task(apc.start(), "apc.start")),
                 asyncio.create_task(watch_task(blec.start(), "blec.start")),
-                asyncio.create_task(watch_task(process_power_light_queue(), "process_power_light_queue")),
                 asyncio.create_task(watch_task(motion_radar.start(poll_interval_ms=10), "motion_radar.start")),
             ]
             await asyncio.sleep_ms(100)
@@ -403,18 +371,35 @@ async def main() -> None:
         status_led.status(RGBLED_STATUS_BOOTED)
 
         memory_log_counter = 0
+        
         while True:
-            await asyncio.sleep(1)
+            await asyncio.sleep_ms(500)
 
-            log.debug("Lux %d" % lux_sensor.read_lux())
+            light_on_threshold = cfg.get("light_on_threshold")
+            lux = lux_sensor.read_lux()
+            log.debug("Lux %d" % lux)
 
+            if lux <= light_on_threshold:
+                if not motion_radar.is_running():
+                    mr_task = asyncio.create_task(watch_task(motion_radar.start(poll_interval_ms=10), "motion_radar.start"))
+                    tasks.append(mr_task)
+                    log.debug("Turning radar back on")
+
+            elif lux > light_on_threshold + 20:
+                motion_radar.stop()
+                log.debug("Turning radar off")
+
+
+            status_sensors = get_sensors_status()
+            if status_sensors is not None:
+                blec.notify(BLEC_NOTIFICATION_SENSORS, status_sensors)
 
 
             if last_task_exception is not None:
                 raise last_task_exception
 
             memory_log_counter += 1
-            if memory_log_counter % 6 == 0:  # Every 10 minutes
+            if memory_log_counter % 120 == 0:  # Every 10 minutes
                 text = log_memory_status(log, flog)
                 blec.notify(BLEC_NOTIFICATION_TEXT, text.encode())
                 
