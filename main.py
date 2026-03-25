@@ -1,5 +1,5 @@
 import asyncio
-import time
+import json
 import webrepl
 from boot import sta
 import logging
@@ -17,9 +17,9 @@ from controllers.status_led import StatusLED
 from controllers.motion_radar import MotionRadar
 from controllers.led_strip import LEDStrip
 
-from defs import BLEC_CHARACTERISTIC_GETCFG, BLEC_CMD_SET_LIGHT_LEVEL
+from defs import BLEC_CHARACTERISTIC_GETCFG, BLEC_CMD_SET_LIGHT_LEVEL, BLEC_CMD_SET_LIGHT_STATE, RGBLED_STATUS_BTOFF
 from defs import RGBLED_STATUS_BOOTED, RGBLED_STATUS_CONNECTED, RGBLED_STATUS_ERROR
-from defs import BLEC_NOTIFICATION_SENSORS, BLEC_NOTIFICATION_TEXT, BLEC_EVENT_LIGHT_STATE, BLEC_CMD_SETCFG_DIMMER_LEVEL, BLEC_CMD_SETCFG_HOSTNAME, BLEC_CMD_SETCFG_LIGHT_ON_TIME, BLEC_CMD_SYSTEM
+from defs import BLEC_NOTIFICATION_SENSORS, BLEC_NOTIFICATION_TEXT, BLEC_EVENT_LIGHT_STATE, BLEC_CMD_SETCFG, BLEC_CMD_SYSTEM
 from defs import Dict, Any, List, Optional
 from defs import safe_async_call, safe_call, log_memory_status
 
@@ -29,12 +29,6 @@ if TYPE_CHECKING:
     status_led: StatusLED
     led_strip: LEDStrip
 
-event_activate_wireless: asyncio.ThreadSafeFlag
-button_press_start_ticks: int
-
-display_queue: Queue
-power_light_queue: Queue
-
 timer_light: OneShotTimer
 
 blec: BLEController
@@ -43,12 +37,11 @@ flog: FileLogger
 lux_sensor: SensorLUX
 motion_radar: MotionRadar
 
-log = logging.getLogger("[Main]")
-log.setLevel(logging.DEBUG)
-
-sleep_mode: asyncio.Event
 last_task_exception: Optional[Exception]
 failed_task_name: Optional[str] = None
+
+log = logging.getLogger("[Main]")
+log.setLevel(logging.DEBUG)
 
 @safe_call(log)
 def get_sensors_status() -> bytes | None:
@@ -122,64 +115,28 @@ async def blec_cmd_callback(cmd: int, payload: bytes) -> None:
             except Exception as e:
                 app_error("Error stopping wireless services: %s" % e, e)
                 log.exception("Error stopping wireless services: %s" % e)
+                
     elif cmd == BLEC_CMD_SET_LIGHT_LEVEL:
-        # TODO: Set light level
         if len(payload) < 1:
             log.error("BLEC_CMD_SET_LIGHT_LEVEL: payload too short")
             return
-        state = payload[0]
-        try:
-            pin_dimmer_control.value(state)
-            log.info("Dimmer control: %s" % state)
-        except Exception as e:
-            app_error("Error controlling dimmer: %s" % e, e)
-            log.exception("Error controlling dimmer: %s" % e)
-            
-    elif cmd == BLEC_CMD_SETCFG_DIMMER_LEVEL:
+        level = payload[0]
+        await led_strip.power(True, level)
+                
+    elif cmd == BLEC_CMD_SET_LIGHT_STATE:
         if len(payload) < 1:
-            log.error("BLEC_CMD_SETCFG_DIMMER_LEVEL: payload too short")
+            log.error("BLEC_CMD_SET_LIGHT_STATE: payload too short")
             return
-        dimmer_level = payload[0]
-        try:
-            cfg.set("dimmer_level", dimmer_level)
-            cfg.save()
-            blec.set_characteristic_value(BLEC_CHARACTERISTIC_GETCFG, cfg.json())
-            log.info("Dimmer level config saved: %d" % dimmer_level)
-        except Exception as e:
-            app_error("Error saving dimmer level: %s" % e, e)
-            log.exception("Error saving dimmer level: %s" % e)
-    elif cmd == BLEC_CMD_SETCFG_HOSTNAME:
-        try:
-            hostname = payload.decode("utf-8")
-            if not hostname:
-                log.error("Empty hostname provided")
-                return
-            cfg.set("hostname", hostname)
-            cfg.save()
-            # TODO: config
-            blec.set_characteristic_value(BLEC_CHARACTERISTIC_GETCFG, cfg.json()) 
-            log.info("Hostname saved: %s" % hostname)
-        except UnicodeDecodeError as e:
-            app_error("Invalid hostname encoding: %s" % e, e)
-            log.exception("Invalid hostname encoding: %s" % e)
-        except Exception as e:
-            app_error("Error saving hostname: %s" % e, e)
-            log.exception("Error saving hostname: %s" % e)
-    elif cmd == BLEC_CMD_SETCFG_LIGHT_ON_TIME:
-        if len(payload) < 4:
-            log.error("BLEC_CMD_SETCFG_LIGHT_ON_TIME: payload too short")
-            return
-        try:
-            light_on_time = int.from_bytes(payload, 'big')
-            cfg.set("light_on_time", light_on_time)
-            cfg.save()
-            # TODO: config
-            blec.set_characteristic_value(BLEC_CHARACTERISTIC_GETCFG, cfg.json())
-            log.info("Light on time config saved: %d" % light_on_time)
-        except Exception as e:
-            app_error("Error saving light on time: %s" % e, e)
-            log.exception("Error saving light on time: %s" % e)
-    # TODO: save moreconfig
+        state = bool(payload[0])
+        await led_strip.power(state)
+
+    elif cmd == BLEC_CMD_SETCFG:
+        merged_config = cfg.merge_config(payload.decode("utf-8"))
+        if merged_config is not None:
+            config = cfg.json()
+            log.info("Config saved: %s" % config)
+            blec.set_characteristic_value(BLEC_CHARACTERISTIC_GETCFG, config)
+
     
     else:
         log.error("Unknown command: 0x%02X" % cmd)
@@ -204,24 +161,20 @@ async def blec_on_disconnect() -> None:
 
 @safe_async_call(log)
 async def blec_on_stop() -> None:
-    status_led.status(StatusLED.STATUS_OFF)
+    status_led.status(RGBLED_STATUS_BTOFF)
 
 def initialize_variables() -> None:
-    global display_queue, power_light_queue, event_activate_wireless, button_press_start_ticks
-    global timer_light, pin_monitor, flog, sleep_mode, status_led
+    global timer_light, flog, status_led
 
-    event_activate_wireless = asyncio.ThreadSafeFlag()
-    button_press_start_ticks = -1
-    display_queue = Queue()
-    power_light_queue = Queue()
     timer_light = OneShotTimer()
     flog = FileLogger("log.txt", max_bytes=100_000, backups=2)
-    sleep_mode = asyncio.Event()
 
 def initialize_blec() -> None:    
     global blec
 
-    blec = BLEController("Bed Lux Brain v2 R")
+    device_name = cfg.get("device_name")
+
+    blec = BLEController(device_name)
 
     blec.on_start = blec_on_start
     blec.on_connect = blec_on_connect
@@ -253,8 +206,8 @@ def load_config():
     cfg.load()
     log.info('Config loaded')
 
-def check_config():
-    for param in ["light_on_time", "ambient_light_threshold", "energy_threshold", "hostname", "dimmer_level"]:
+def verify_config():
+    for param in ["light_on_time", "ambient_light_threshold", "energy_threshold", "device_name", "dimmer_level"]:
         if cfg.get(param) is None:
             raise Exception("%s not configured" % param)
 
@@ -269,12 +222,11 @@ async def main() -> None:
         initialize_variables()
 
         load_config()
-        check_config()
+        verify_config()
 
         initialize_lux_sensor()
         initialize_radar()
         initialize_blec()
-
 
         flog.info("main(): Initialized")
         

@@ -78,6 +78,9 @@ class LEDStrip:
         return self._fade_to(0)
 
     async def power(self, state: bool, level: int = 100) -> None:
+        if level == 0:
+            state = False
+
         if state == self._current_state:
             return
         

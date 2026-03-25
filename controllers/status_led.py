@@ -4,14 +4,13 @@ import asyncio
 import logging
 import neopixel
 
-from defs import RGBLED_STATUS_OFF, RGBLED_STATUS_BOOTED, RGBLED_STATUS_BOOTING, RGBLED_STATUS_CONNECTING, RGBLED_STATUS_CONNECTED, RGBLED_STATUS_ERROR, Dict, Optional, Tuple
+from defs import RGBLED_STATUS_BTOFF, RGBLED_STATUS_OFF, RGBLED_STATUS_BOOTED, RGBLED_STATUS_BOOTING, RGBLED_STATUS_CONNECTING, RGBLED_STATUS_CONNECTED, RGBLED_STATUS_ERROR, Dict, Optional, Tuple
 from machine import Pin
 
 log: logging.Logger = logging.getLogger("[StatusLED]")
 log.setLevel(logging.INFO)
 
 class StatusLED:
-    STATUS_OFF = -1
 
     def __init__(
         self,
@@ -40,6 +39,7 @@ class StatusLED:
             RGBLED_STATUS_CONNECTING: (0, 0, 150),
             RGBLED_STATUS_CONNECTED: (0, 0, 150),
             RGBLED_STATUS_ERROR: (150, 0, 0),
+            RGBLED_STATUS_BTOFF: (0, 150, 0),
         }
 
         self.log = logging.getLogger("[StatusLED]")
@@ -89,7 +89,7 @@ class StatusLED:
                     await asyncio.sleep_ms(self.interval_ms)
                     continue
 
-                if self._status == RGBLED_STATUS_ERROR:
+                if self._status in [RGBLED_STATUS_ERROR, RGBLED_STATUS_BTOFF]:
                     self._write_color(self._get_color_for_status(self._status))
                     await asyncio.sleep_ms(200)
                     self._write_color(self._get_color_for_status(RGBLED_STATUS_OFF))

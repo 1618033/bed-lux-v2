@@ -50,3 +50,34 @@ class JSONConfig:
         except ValueError:
             log.exception("Failed to decode JSON in '%s'. Using defaults." % self.path)
         return "{}"
+
+
+    def merge_config(self, patch: str) -> Dict[str, Any] | None:
+        try:
+            config_patch = json.loads(patch)
+        except UnicodeDecodeError as e:
+            log.exception("Invalid config payload encoding: %s" % e)
+            return None
+        except ValueError as e:
+            log.exception("Invalid config JSON payload: %s" % e)
+            return None
+
+        if not isinstance(config_patch, dict):
+            log.error("BLEC_CMD_SETCFG: payload must be a JSON object")
+            return None
+
+        try:
+            merged_config = json.loads(self.json())
+            if not isinstance(merged_config, dict):
+                raise ValueError("Current config is not a JSON object")
+
+            merged_config.update(config_patch)
+
+            for key, value in merged_config.items():
+                self.set(key, value)
+
+            self.save()
+            return merged_config
+        except Exception as e:
+            log.exception("Error saving config: %s" % e)
+            return None
