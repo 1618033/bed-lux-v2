@@ -5,18 +5,16 @@ import bluetooth
 import logging
 import gc
 
-from defs import BLE_SERVICE_UUID, BLE_CMD_UUID, BLE_CFG_DIMMER_LEVEL_UUID, BLE_CFG_HOSTNAME_UUID, BLE_CFG_LIGHT_ON_TIME_UUID, BLE_EVENT_UUID, BLE_NOTIFICATION_UUID
+from defs import BLE_SERVICE_UUID, BLE_CMD_UUID, BLE_GETCFG_UUID, BLE_EVENT_UUID, BLE_NOTIFICATION_UUID
 from defs import BLEC_NOTIFICATION_SENSORS, BLEC_NOTIFICATION_TEXT
-from defs import BLEC_CHARACTERISTIC_DIMMER_LEVEL, BLEC_CHARACTERISTIC_HOSTNAME, BLEC_CHARACTERISTIC_LIGHT_ON_TIME, BLEC_CHARACTERISTIC_EVENT, BLEC_CHARACTERISTIC_NOTIFICATION
+from defs import BLEC_CHARACTERISTIC_GETCFG, BLEC_CHARACTERISTIC_EVENT, BLEC_CHARACTERISTIC_NOTIFICATION
 from defs import BLEC_EVENT_LIGHT_STATE
 from defs import ADV_INTERVAL_MS
 from defs import Optional, Any, Union, List
 
 _BLE_SERVICE_UUID = bluetooth.UUID(BLE_SERVICE_UUID)
 _BLE_CMD_UUID = bluetooth.UUID(BLE_CMD_UUID)
-_BLE_CFG_DIMMER_LEVEL_UUID = bluetooth.UUID(BLE_CFG_DIMMER_LEVEL_UUID)
-_BLE_CFG_HOSTNAME_UUID = bluetooth.UUID(BLE_CFG_HOSTNAME_UUID)
-_BLE_CFG_LIGHT_ON_TIME_UUID = bluetooth.UUID(BLE_CFG_LIGHT_ON_TIME_UUID)
+_BLE_GETCFG_UUID = bluetooth.UUID(BLE_GETCFG_UUID)
 _BLE_EVENT_UUID = bluetooth.UUID(BLE_EVENT_UUID)
 _BLE_NOTIFICATION_UUID = bluetooth.UUID(BLE_NOTIFICATION_UUID)
 
@@ -31,9 +29,7 @@ class BLEController:
         self.name: str = name
         self.ble_service: aioble.Service = aioble.Service(_BLE_SERVICE_UUID)
         self.cmd_characteristic: Optional[aioble.Characteristic] = None
-        self.cfg_dimmer_level_characteristic: Optional[aioble.Characteristic] = None
-        self.cfg_hostname_characteristic: Optional[aioble.Characteristic] = None
-        self.cfg_light_on_time_characteristic: Optional[aioble.Characteristic] = None        
+        self.getcfg_characteristic: Optional[aioble.Characteristic] = None
         self.notification_characteristic: Optional[aioble.Characteristic] = None        
         self.event_characteristic: Optional[aioble.Characteristic] = None
         self.terminate: bool = False
@@ -114,12 +110,10 @@ class BLEController:
             log.debug("Bluetooth service not active")
             return
 
-        if characteristic == BLEC_CHARACTERISTIC_DIMMER_LEVEL:
-            char = self.cfg_dimmer_level_characteristic
-        elif characteristic == BLEC_CHARACTERISTIC_HOSTNAME:
-            char = self.cfg_hostname_characteristic
-        elif characteristic == BLEC_CHARACTERISTIC_LIGHT_ON_TIME:
-            char = self.cfg_light_on_time_characteristic
+        # TODO: config
+
+        if characteristic == BLEC_CHARACTERISTIC_GETCFG:
+            char = self.getcfg_characteristic
         elif characteristic == BLEC_CHARACTERISTIC_EVENT:
             char = self.event_characteristic
         elif characteristic == BLEC_CHARACTERISTIC_NOTIFICATION:
@@ -134,11 +128,13 @@ class BLEController:
             return
         
         try:
+            if isinstance(value, str):
+                value = value.encode("utf-8")
             log.debug("Setting characteristic value. [0x%02X] -> %s" % (characteristic, value))
             char.write(value, send_update=send_update)
         except Exception as e:
-            self.on_error("Unable to write to BLE characteristic: %s" % e)
-            log.exception("Unable to write to BLE characteristic: %s" % e)
+            self.on_error("Unable to write to BLE characteristic [0x%02x]: %s" % (characteristic, e))
+            log.exception("Unable to write to BLE characteristic [0x%02x]: %s" % (characteristic, e))
 
         
     
@@ -272,9 +268,7 @@ class BLEController:
         self.ble_service = aioble.Service(_BLE_SERVICE_UUID)
         self.cmd_characteristic = aioble.Characteristic(self.ble_service, _BLE_CMD_UUID, write=True, capture=True)
         self.event_characteristic = aioble.Characteristic(self.ble_service, _BLE_EVENT_UUID, write=True, notify=True, capture=True)
-        self.cfg_dimmer_level_characteristic = aioble.Characteristic(self.ble_service, _BLE_CFG_DIMMER_LEVEL_UUID, read=True)
-        self.cfg_hostname_characteristic = aioble.Characteristic(self.ble_service, _BLE_CFG_HOSTNAME_UUID, read=True)
-        self.cfg_light_on_time_characteristic = aioble.Characteristic(self.ble_service, _BLE_CFG_LIGHT_ON_TIME_UUID, read=True)
+        self.getcfg_characteristic = aioble.Characteristic(self.ble_service, _BLE_GETCFG_UUID, read=True)
         self.notification_characteristic = aioble.Characteristic(self.ble_service, _BLE_NOTIFICATION_UUID, notify=True, read=True)
         
         aioble.register_services(self.ble_service)

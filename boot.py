@@ -1,10 +1,9 @@
-import network, bluetooth, time, logging, micropython, neopixel
+import network, bluetooth, time, logging
 from machine import Pin
-from defs import PIN_SCL, PIN_SDA, PIN_MOTION, PIN_LEDSTRIP_PWM, PIN_RGB_LED
+from defs import PIN_SCL, PIN_SDA, PIN_LEDSTRIP_PWM, PIN_RGB_LED
 from defs import RGBLED_STATUS_BOOTING
 from mylib.helpers import log_memory_status
 from controllers.status_led import StatusLED
-from controllers.motion_radar import MotionRadar
 from controllers.led_strip import LEDStrip
 
 
@@ -21,11 +20,9 @@ pin_scl = Pin(PIN_SCL)
 pin_sda = Pin(PIN_SDA)
 
 pin_ledstrip_pwm = Pin(PIN_LEDSTRIP_PWM, Pin.OUT)
-pin_motion = Pin(PIN_MOTION, Pin.IN, Pin.PULL_DOWN)
 pin_rgb_led = Pin(PIN_RGB_LED, Pin.OUT)
 
 status_led = StatusLED(pin_rgb_led)
-
 status_led.status(RGBLED_STATUS_BOOTING, True)
 
 led_strip = LEDStrip()
@@ -40,7 +37,6 @@ try:
     ble.active(False)
     time.sleep_ms(500)  # Give WiFi time to deinitialize
     ble.active(True)
-    ap.active(True)
 except Exception as e:
     log.warning("Error deactivating wireless functions: %s" % e)
 

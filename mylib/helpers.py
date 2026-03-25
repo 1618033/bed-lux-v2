@@ -1,5 +1,5 @@
 from mylib.file_logger import FileLogger
-import logging, gc, micropython, esp32, sys
+import logging, gc, micropython, esp32, sys, asyncio
 
 def show_idf_heap(logger: logging.Logger):
     for i, (total, free, largest, min_free) in enumerate(esp32.idf_heap_info(esp32.HEAP_DATA)):

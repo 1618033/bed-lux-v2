@@ -77,12 +77,12 @@ class LEDStrip:
         log.debug("Turning LED strip off")
         return self._fade_to(0)
 
-    async def power(self, state: bool) -> None:
+    async def power(self, state: bool, level: int = 100) -> None:
         if state == self._current_state:
             return
         
         self._current_state = state
-        
+
         if self._worker is not None:
             self._interrupt_event.set()
             await self._worker
@@ -90,7 +90,7 @@ class LEDStrip:
             self._worker = None
 
         if state:
-            self._worker = asyncio.create_task(self._turn_on())
+            self._worker = asyncio.create_task(self._turn_on(int(level * self._max_duty / 100)))
         else:
             self._worker = asyncio.create_task(self._turn_off())
 

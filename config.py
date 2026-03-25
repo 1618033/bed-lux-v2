@@ -41,3 +41,12 @@ class JSONConfig:
 
     def clear(self) -> None:
         self.data.clear()
+
+    def json(self) -> str:
+        try:
+            return json.dumps(self.data)
+        except OSError:
+            log.exception("Config file '%s' not found. Using defaults." % self.path)
+        except ValueError:
+            log.exception("Failed to decode JSON in '%s'. Using defaults." % self.path)
+        return "{}"
