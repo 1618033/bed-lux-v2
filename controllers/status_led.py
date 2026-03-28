@@ -34,12 +34,12 @@ class StatusLED:
 
         self._status_colors: Dict[int, Tuple[int, int, int]] = {
             RGBLED_STATUS_OFF: (0, 0, 0),
-            RGBLED_STATUS_BOOTING: (150, 0, 0),
-            RGBLED_STATUS_BOOTED: (0, 150, 0),
-            RGBLED_STATUS_CONNECTING: (0, 0, 150),
-            RGBLED_STATUS_CONNECTED: (0, 0, 150),
-            RGBLED_STATUS_ERROR: (150, 0, 0),
-            RGBLED_STATUS_BTOFF: (0, 150, 0),
+            RGBLED_STATUS_BOOTING: (1, 0, 0),
+            RGBLED_STATUS_BOOTED: (0, 1, 0),
+            RGBLED_STATUS_CONNECTING: (0, 0, 1),
+            RGBLED_STATUS_CONNECTED: (0, 0, 1),
+            RGBLED_STATUS_ERROR: (1, 0, 0),
+            RGBLED_STATUS_BTOFF: (0, 1, 0),
         }
 
         self.log = logging.getLogger("[StatusLED]")

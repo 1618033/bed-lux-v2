@@ -21,9 +21,9 @@ _BLE_PREFERRED_MTU = _CMD_WRITE_BUFFER_SIZE + 3
 _BLE_RXBUF_SIZE = 512
 
 log: logging.Logger = logging.getLogger("[BLEC]")
-log.setLevel(logging.INFO)
+log.setLevel(logging.DEBUG)
 logcmd: logging.Logger = logging.getLogger("[BLEC][CMD]")
-logcmd.setLevel(logging.INFO)
+logcmd.setLevel(logging.DEBUG)
 
 
 class BLEController:

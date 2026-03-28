@@ -33,6 +33,7 @@ class LEDStrip:
         self._done_event = Event() 
         self._worker: Optional[Task] = None
         self._current_state = False
+        self._current_target_level = -1
 
     def is_on(self) -> bool:
         return self._is_on
@@ -81,10 +82,11 @@ class LEDStrip:
         if level == 0:
             state = False
 
-        if state == self._current_state:
+        if state == self._current_state and level == self._current_target_level:
             return
         
         self._current_state = state
+        self._current_target_level = level
 
         if self._worker is not None:
             self._interrupt_event.set()

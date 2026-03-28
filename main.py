@@ -1,5 +1,5 @@
 import asyncio
-import json
+import machine
 import webrepl
 from boot import sta
 import logging
@@ -17,7 +17,7 @@ from controllers.status_led import StatusLED
 from controllers.motion_radar import MotionRadar
 from controllers.led_strip import LEDStrip
 
-from defs import BLEC_CHARACTERISTIC_GETCFG, BLEC_CMD_SET_LIGHT_LEVEL, BLEC_CMD_SET_LIGHT_STATE, RGBLED_STATUS_BTOFF
+from defs import BLEC_CHARACTERISTIC_GETCFG, BLEC_CMD_SET_LIGHT_LEVEL, BLEC_CMD_SET_LIGHT_STATE, BLEC_SUBCMD_SYSTEM_RESET, BLEC_SUBCMD_SYSTEM_TURN_OFF_WIRELESS, RGBLED_STATUS_BTOFF
 from defs import RGBLED_STATUS_BOOTED, RGBLED_STATUS_CONNECTED, RGBLED_STATUS_ERROR
 from defs import BLEC_NOTIFICATION_SENSORS, BLEC_NOTIFICATION_TEXT, BLEC_CMD_SETCFG, BLEC_CMD_SYSTEM
 from defs import Dict, Any, List, Optional
@@ -37,6 +37,7 @@ flog: FileLogger
 lux_sensor: SensorLUX
 motion_radar: MotionRadar
 
+main_tasks: List[asyncio.Task[Any]]
 last_task_exception: Optional[Exception]
 failed_task_name: Optional[str] = None
 
@@ -104,8 +105,8 @@ async def blec_cmd_callback(cmd: int, payload: bytes) -> None:
         if len(payload) < 1:
             log.error("BLEC_CMD_SYSTEM: payload too short")
             return
-        cmd_sys = payload[0]
-        if cmd_sys == 0xFF:
+        subcmd = payload[0]
+        if subcmd == BLEC_SUBCMD_SYSTEM_TURN_OFF_WIRELESS:
             log.info("Stopping wireless services...")
             try:
                 blec.stop(True)
@@ -114,12 +115,17 @@ async def blec_cmd_callback(cmd: int, payload: bytes) -> None:
             except Exception as e:
                 app_error("Error stopping wireless services: %s" % e, e)
                 log.exception("Error stopping wireless services: %s" % e)
-                
+        if subcmd == BLEC_SUBCMD_SYSTEM_RESET:
+            log.info("Performing a hard reset...")
+            await cleanup()
+            machine.reset()
+
     elif cmd == BLEC_CMD_SET_LIGHT_LEVEL:
         if len(payload) < 1:
             log.error("BLEC_CMD_SET_LIGHT_LEVEL: payload too short")
             return
         level = payload[0]
+        log.debug("level %d" % level)
         await led_strip.power(True, level)
                 
     elif cmd == BLEC_CMD_SET_LIGHT_STATE:
@@ -136,6 +142,8 @@ async def blec_cmd_callback(cmd: int, payload: bytes) -> None:
             merged_config = cfg.merge_config(payload.decode("utf-8"))
             log.debug("config received: %s" % merged_config)
             if merged_config is not None:
+                if "energy_threshold" in merged_config:
+                    motion_radar.set_energy_threshold(merged_config["energy_threshold"])
                 config = cfg.json()
                 log.info("Config saved: %s" % config)
                 blec.set_characteristic_value(BLEC_CHARACTERISTIC_GETCFG, config)
@@ -216,8 +224,7 @@ def verify_config():
             raise Exception("%s not configured" % param)
 
 async def main() -> None:
-    global last_task_exception, failed_task_name
-    tasks: List[asyncio.Task[Any]] = []
+    global last_task_exception, failed_task_name, main_tasks
 
 
     try:
@@ -235,7 +242,7 @@ async def main() -> None:
         flog.info("main(): Initialized")
         
         try:
-            tasks = [
+            main_tasks = [
                 asyncio.create_task(watch_task(status_led.start(), "status_led.start")),
                 asyncio.create_task(watch_task(blec.start(), "blec.start")),
                 asyncio.create_task(watch_task(motion_radar.start(poll_interval_ms=10), "motion_radar.start")),
@@ -258,12 +265,14 @@ async def main() -> None:
             if lux <= ambient_light_threshold:
                 if not motion_radar.is_running():
                     mr_task = asyncio.create_task(watch_task(motion_radar.start(poll_interval_ms=10), "motion_radar.start"))
-                    tasks.append(mr_task)
+                    main_tasks.append(mr_task)
                     log.debug("Reading radar: back on")
+                    blec.notify(BLEC_NOTIFICATION_TEXT, "Reading radar: back on".encode())
             elif lux > ambient_light_threshold + 20:
                 if motion_radar.is_running():
                     motion_radar.stop()
                     log.debug("Reading radar: off")
+                    blec.notify(BLEC_NOTIFICATION_TEXT, "Reading radar: off".encode())
 
             status_sensors = get_sensors_status()
             if status_sensors is not None:
@@ -287,18 +296,18 @@ async def main() -> None:
         log.exception("Error in main loop: %s" % e)
         raise
     finally:
-        await cleanup(tasks)
+        await cleanup()
 
 
-async def cleanup(tasks: List[asyncio.Task[Any]]):
+async def cleanup():
     log.info("Cleaning up...")
     # Cancel all tasks
-    for task in tasks:
+    for task in main_tasks:
         if task and not task.done():
             task.cancel()
     
     # Wait for all tasks to complete cancellation
-    await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.gather(*main_tasks, return_exceptions=True)
     
     # Cleanup resources
     try:
