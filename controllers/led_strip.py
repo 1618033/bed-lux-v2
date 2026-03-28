@@ -68,12 +68,12 @@ class LEDStrip:
 
         self.set_duty(target_duty)
 
-    async def _turn_on(self, duty: int | None = None) -> Task:
+    def _turn_on(self, duty: int | None = None) -> Task:
         target_duty = self._max_duty if duty is None else duty
         log.debug("Turning LED strip on")
         return self._fade_to(target_duty)
 
-    async def _turn_off(self) -> Task:
+    def _turn_off(self) -> Task:
         log.debug("Turning LED strip off")
         return self._fade_to(0)
 

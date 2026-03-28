@@ -19,7 +19,7 @@ from controllers.led_strip import LEDStrip
 
 from defs import BLEC_CHARACTERISTIC_GETCFG, BLEC_CMD_SET_LIGHT_LEVEL, BLEC_CMD_SET_LIGHT_STATE, RGBLED_STATUS_BTOFF
 from defs import RGBLED_STATUS_BOOTED, RGBLED_STATUS_CONNECTED, RGBLED_STATUS_ERROR
-from defs import BLEC_NOTIFICATION_SENSORS, BLEC_NOTIFICATION_TEXT, BLEC_EVENT_LIGHT_STATE, BLEC_CMD_SETCFG, BLEC_CMD_SYSTEM
+from defs import BLEC_NOTIFICATION_SENSORS, BLEC_NOTIFICATION_TEXT, BLEC_CMD_SETCFG, BLEC_CMD_SYSTEM
 from defs import Dict, Any, List, Optional
 from defs import safe_async_call, safe_call, log_memory_status
 
@@ -47,10 +47,10 @@ log.setLevel(logging.DEBUG)
 def get_sensors_status() -> bytes | None:
     status: bytes = b''
 
-
     led_strip_on = int(led_strip.is_on())
     lux = int(lux_sensor.read_lux())
     radar_report = motion_radar.get_last_report()
+    motion_state = motion_radar.get_motion_state()
 
     energies = [0] * 14
     if radar_report and "moving_gate_energies" in radar_report:
@@ -61,6 +61,7 @@ def get_sensors_status() -> bytes | None:
     status += led_strip_on.to_bytes(1, 'big')
     status += lux.to_bytes(2, 'big')
     status += bytes(energies)
+    status += bytes(chr(motion_state), "utf-8")
     
     return status
 
@@ -76,13 +77,11 @@ async def power_led_strip(state: bool, energies: List) -> None:
         log.debug("Turning LED strip off")
         await led_strip.power(False)
         timer_light.cancel()
-        blec.trigger(BLEC_EVENT_LIGHT_STATE, int(False).to_bytes(1, 'big'))
         return
 
     if ambient_light < ambient_light_threshold:
         log.debug("Turning LED strip on")
         await led_strip.power(True, dimmer_level)
-        blec.trigger(BLEC_EVENT_LIGHT_STATE, int(True).to_bytes(1, 'big'))
 
         try:
             timer_light.start(light_on_time, lambda t: power_led_strip(False, energies))

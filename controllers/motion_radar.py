@@ -141,6 +141,9 @@ class MotionRadar:
     def get_last_report(self) -> None | Dict[str, Any]:
         return self._last_report
 
+    def get_motion_state(self) -> bool:
+        return self._motion_state
+
     def read_report(self, timeout_ms: Optional[int] = None):
         if not self._initialized and not self.start():
             raise OSError("LD2412 radar is not available")

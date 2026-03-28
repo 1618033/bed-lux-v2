@@ -5,23 +5,21 @@ import bluetooth
 import logging
 import gc
 
-from defs import BLE_SERVICE_UUID, BLE_CMD_UUID, BLE_GETCFG_UUID, BLE_EVENT_UUID, BLE_NOTIFICATION_UUID
+from defs import BLE_SERVICE_UUID, BLE_CMD_UUID, BLE_GETCFG_UUID, BLE_NOTIFICATION_UUID
 from defs import BLEC_NOTIFICATION_SENSORS, BLEC_NOTIFICATION_TEXT
-from defs import BLEC_CHARACTERISTIC_GETCFG, BLEC_CHARACTERISTIC_EVENT, BLEC_CHARACTERISTIC_NOTIFICATION
-from defs import BLEC_EVENT_LIGHT_STATE
+from defs import BLEC_CHARACTERISTIC_GETCFG, BLEC_CHARACTERISTIC_NOTIFICATION
 from defs import ADV_INTERVAL_MS
 from defs import Optional, Any, Union, List
 
 _BLE_SERVICE_UUID = bluetooth.UUID(BLE_SERVICE_UUID)
 _BLE_CMD_UUID = bluetooth.UUID(BLE_CMD_UUID)
 _BLE_GETCFG_UUID = bluetooth.UUID(BLE_GETCFG_UUID)
-_BLE_EVENT_UUID = bluetooth.UUID(BLE_EVENT_UUID)
 _BLE_NOTIFICATION_UUID = bluetooth.UUID(BLE_NOTIFICATION_UUID)
 
 log: logging.Logger = logging.getLogger("[BLEC]")
-log.setLevel(logging.INFO)
+log.setLevel(logging.DEBUG)
 logcmd: logging.Logger = logging.getLogger("[BLEC][CMD]")
-logcmd.setLevel(logging.INFO)
+logcmd.setLevel(logging.DEBUG)
 
 
 class BLEController:
@@ -30,14 +28,12 @@ class BLEController:
         self.ble_service: aioble.Service = aioble.Service(_BLE_SERVICE_UUID)
         self.cmd_characteristic: Optional[aioble.Characteristic] = None
         self.getcfg_characteristic: Optional[aioble.Characteristic] = None
-        self.notification_characteristic: Optional[aioble.Characteristic] = None        
-        self.event_characteristic: Optional[aioble.Characteristic] = None
+        self.notification_characteristic: Optional[aioble.Characteristic] = None
         self.terminate: bool = False
         self._active: bool = False
         self._connected: bool = False
         self.ble_enable_task: Optional[asyncio.Task[Any]] = None
         self.wait_for_cmd_characteristic_task: Optional[asyncio.Task[Any]] = None
-        self.wait_for_event_characteristic_task: Optional[asyncio.Task[Any]] = None
         self.tasks: List[asyncio.Task[Any]] = []
         self.initialized: bool = False
         self.last_exception: Optional[Exception]
@@ -46,9 +42,6 @@ class BLEController:
     async def cmd_callback(self, cmd: int, payload: bytes) -> None:
         return
     
-    async def event_callback(self, event_id: int, payload: bytes) -> None:
-        return
-
     async def on_start(self) -> None:
         return
     
@@ -114,8 +107,6 @@ class BLEController:
 
         if characteristic == BLEC_CHARACTERISTIC_GETCFG:
             char = self.getcfg_characteristic
-        elif characteristic == BLEC_CHARACTERISTIC_EVENT:
-            char = self.event_characteristic
         elif characteristic == BLEC_CHARACTERISTIC_NOTIFICATION:
             char = self.notification_characteristic
         else:
@@ -162,30 +153,11 @@ class BLEController:
                 raise
             finally:
                 await asyncio.sleep_ms(100)
-
-    async def wait_for_event_characteristic(self) -> None:
-        while not self.terminate:
-            try:
-                if self.event_characteristic is None:
-                    await asyncio.sleep_ms(100)
-                    continue
-                connection, data = await self.event_characteristic.written()  # type: ignore
-                event_id = data[0]
-                payload = data[1:]
-                
-                await self.event_callback(event_id, payload)    
-                    
-            except asyncio.CancelledError:
-                self.on_error("wait_for_event_characteristic task cancelled")
-                logcmd.exception("wait_for_event_characteristic task cancelled")
-            except Exception as e:
-                self.on_error("Error in wait_for_event_characteristic", e)
-                logcmd.exception("Error in wait_for_event_characteristic")
-                raise
-            finally:
-                await asyncio.sleep_ms(100)
     
     def notify(self, notification_type: int, value: bytes) -> None:
+        if not self.connected():
+            return
+
         if notification_type not in [BLEC_NOTIFICATION_SENSORS, BLEC_NOTIFICATION_TEXT]:
             self.on_error("Unknown notification_type: [0x%02X]" % notification_type)
             log.error("Unknown notification_type: [0x%02X]" % notification_type)
@@ -193,15 +165,6 @@ class BLEController:
         
         log.debug("Sending notification [0x%02X]" % notification_type)
         self.set_characteristic_value(BLEC_CHARACTERISTIC_NOTIFICATION, chr(notification_type).encode() + value, send_update=True)
-
-    def trigger(self, event_id: int, value: bytes) -> None:
-        if event_id not in [BLEC_EVENT_LIGHT_STATE]:
-            self.on_error("Unknown event_id: [0x%02X]" % event_id)
-            log.error("Unknown event_id: [0x%02X]" % event_id)
-            return
-
-        log.debug("Triggering event [0x%02X]" % event_id)
-        self.set_characteristic_value(BLEC_CHARACTERISTIC_EVENT, chr(event_id).encode() + value, send_update=True)
                 
     def stop(self, internal: bool = False) -> None:
         if not self._active:
@@ -212,8 +175,6 @@ class BLEController:
         self.terminate = True
         if self.ble_enable_task is not None:
             self.ble_enable_task.cancel()
-        if self.wait_for_event_characteristic_task is not None:
-            self.wait_for_event_characteristic_task.cancel()
         if not internal and self.wait_for_cmd_characteristic_task is not None:
             self.wait_for_cmd_characteristic_task.cancel()
         
@@ -240,7 +201,6 @@ class BLEController:
             for t in (
                 self.ble_enable_task,
                 self.wait_for_cmd_characteristic_task,
-                self.wait_for_event_characteristic_task,
             ):
                 if t is not None and t is not asyncio.current_task():
                     try:
@@ -267,7 +227,6 @@ class BLEController:
     
         self.ble_service = aioble.Service(_BLE_SERVICE_UUID)
         self.cmd_characteristic = aioble.Characteristic(self.ble_service, _BLE_CMD_UUID, write=True, capture=True)
-        self.event_characteristic = aioble.Characteristic(self.ble_service, _BLE_EVENT_UUID, write=True, notify=True, capture=True)
         self.getcfg_characteristic = aioble.Characteristic(self.ble_service, _BLE_GETCFG_UUID, read=True)
         self.notification_characteristic = aioble.Characteristic(self.ble_service, _BLE_NOTIFICATION_UUID, notify=True, read=True)
         
@@ -276,7 +235,6 @@ class BLEController:
         try:
             self.ble_enable_task = self._create_task(self.ble_enable(), "ble_enable")
             self.wait_for_cmd_characteristic_task = self._create_task(self.wait_for_cmd_characteristic(), "wait_for_cmd_characteristic")
-            self.wait_for_event_characteristic_task = self._create_task(self.wait_for_event_characteristic(), "wait_for_event_characteristic")
 
             self.initialized = True
             self._active = True
