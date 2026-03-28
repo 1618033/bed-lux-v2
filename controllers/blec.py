@@ -16,10 +16,14 @@ _BLE_CMD_UUID = bluetooth.UUID(BLE_CMD_UUID)
 _BLE_GETCFG_UUID = bluetooth.UUID(BLE_GETCFG_UUID)
 _BLE_NOTIFICATION_UUID = bluetooth.UUID(BLE_NOTIFICATION_UUID)
 
+_CMD_WRITE_BUFFER_SIZE = 128
+_BLE_PREFERRED_MTU = _CMD_WRITE_BUFFER_SIZE + 3
+_BLE_RXBUF_SIZE = 512
+
 log: logging.Logger = logging.getLogger("[BLEC]")
-log.setLevel(logging.DEBUG)
+log.setLevel(logging.INFO)
 logcmd: logging.Logger = logging.getLogger("[BLEC][CMD]")
-logcmd.setLevel(logging.DEBUG)
+logcmd.setLevel(logging.INFO)
 
 
 class BLEController:
@@ -67,6 +71,28 @@ class BLEController:
         task = asyncio.create_task(self._watch_task(coro, name))
         self.tasks.append(task)
         return task
+
+    def _configure_cmd_write_buffer(self) -> None:
+        if self.cmd_characteristic is None:
+            return
+
+        ble = bluetooth.BLE()
+
+        try:
+            ble.config(mtu=_BLE_PREFERRED_MTU, rxbuf=_BLE_RXBUF_SIZE)
+        except Exception as e:
+            log.warning("Unable to configure preferred BLE MTU/rxbuf: %s", e)
+
+        value_handle = getattr(self.cmd_characteristic, "_value_handle", None)
+        if value_handle is None:
+            log.warning("Command characteristic value handle unavailable; using default write buffer")
+            return
+
+        try:
+            ble.gatts_set_buffer(value_handle, _CMD_WRITE_BUFFER_SIZE)
+            log.info("Command characteristic write buffer set to %d bytes", _CMD_WRITE_BUFFER_SIZE)
+        except Exception as e:
+            log.warning("Unable to configure command write buffer: %s", e)
     
     async def ble_enable(self) -> None:
 
@@ -141,6 +167,7 @@ class BLEController:
                 payload = data[1:]
                 
                 logcmd.debug("Command received: 0x%02X" % cmd)
+                logcmd.debug(payload)
                 
                 await self.cmd_callback(cmd, payload)
                     
@@ -231,6 +258,7 @@ class BLEController:
         self.notification_characteristic = aioble.Characteristic(self.ble_service, _BLE_NOTIFICATION_UUID, notify=True, read=True)
         
         aioble.register_services(self.ble_service)
+        self._configure_cmd_write_buffer()
 
         try:
             self.ble_enable_task = self._create_task(self.ble_enable(), "ble_enable")

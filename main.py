@@ -70,7 +70,7 @@ async def power_led_strip(state: bool, energies: List) -> None:
     ambient_light = lux_sensor.read_lux()
 
     ambient_light_threshold = cfg.get("ambient_light_threshold")
-    dimmer_level = cfg.get("dimmer_level")
+    light_level = cfg.get("light_level")
     light_on_time = cfg.get("light_on_time") * 1000
     
     if state == False:
@@ -81,7 +81,7 @@ async def power_led_strip(state: bool, energies: List) -> None:
 
     if ambient_light < ambient_light_threshold:
         log.debug("Turning LED strip on")
-        await led_strip.power(True, dimmer_level)
+        await led_strip.power(True, light_level)
 
         try:
             timer_light.start(light_on_time, lambda t: power_led_strip(False, energies))
@@ -130,12 +130,17 @@ async def blec_cmd_callback(cmd: int, payload: bytes) -> None:
         await led_strip.power(state)
 
     elif cmd == BLEC_CMD_SETCFG:
-        merged_config = cfg.merge_config(payload.decode("utf-8"))
-        if merged_config is not None:
-            config = cfg.json()
-            log.info("Config saved: %s" % config)
-            blec.set_characteristic_value(BLEC_CHARACTERISTIC_GETCFG, config)
+        log.debug("config received payload: %s" % payload)
 
+        try:
+            merged_config = cfg.merge_config(payload.decode("utf-8"))
+            log.debug("config received: %s" % merged_config)
+            if merged_config is not None:
+                config = cfg.json()
+                log.info("Config saved: %s" % config)
+                blec.set_characteristic_value(BLEC_CHARACTERISTIC_GETCFG, config)
+        except UnicodeDecodeError as e:
+            log.exception("Malformed config payload: %s" % payload)
     
     else:
         log.error("Unknown command: 0x%02X" % cmd)
@@ -206,7 +211,7 @@ def load_config():
     log.info('Config loaded')
 
 def verify_config():
-    for param in ["light_on_time", "ambient_light_threshold", "energy_threshold", "device_name", "dimmer_level"]:
+    for param in ["light_on_time", "ambient_light_threshold", "energy_threshold", "device_name", "light_level"]:
         if cfg.get(param) is None:
             raise Exception("%s not configured" % param)
 
