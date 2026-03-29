@@ -73,16 +73,26 @@ async def power_led_strip(state: bool, energies: List) -> None:
     ambient_light_threshold = cfg.get("ambient_light_threshold")
     light_level = cfg.get("light_level")
     light_on_time = cfg.get("light_on_time") * 1000
+    energies_text = ''.join('%4d' % n for n in energies)
     
     if state == False:
         log.debug("Turning LED strip off")
+        notification = "⚫ Turning LED strip off [light_level=%d] [ambient_light=%d] [energies=[%s]]" % (light_level, ambient_light, energies_text)
+        blec.notify(BLEC_NOTIFICATION_TEXT, notification.encode())
         await led_strip.power(False)
         timer_light.cancel()
         return
 
     if ambient_light < ambient_light_threshold:
-        log.debug("Turning LED strip on")
-        await led_strip.power(True, light_level)
+
+        if led_strip.get_state() != state or led_strip.get_target_level() != light_level:
+            log.debug("Turning LED strip on")
+            notification = "⚪ Turning LED strip on [light_level=%d] [ambient_light=%d] [energies=[%s]]" % (light_level, ambient_light, energies_text)
+            blec.notify(BLEC_NOTIFICATION_TEXT, notification.encode())
+            await led_strip.power(True, light_level)
+        else:
+            log.debug("Resetting timer")
+
 
         try:
             timer_light.start(light_on_time, lambda t: power_led_strip(False, energies))
@@ -92,8 +102,12 @@ async def power_led_strip(state: bool, energies: List) -> None:
 
 @safe_async_call(log)
 async def motion_event_handler(state: bool, energies: List) -> None:
+    log.debug('motion_event_handler')
     if state == True:
         await power_led_strip(state, energies)
+
+async def motion_radar_event_loop() -> None:
+    await motion_radar.event_loop()
 
 @safe_async_call(log)
 async def blec_cmd_callback(cmd: int, payload: bytes) -> None:
@@ -124,9 +138,8 @@ async def blec_cmd_callback(cmd: int, payload: bytes) -> None:
         if len(payload) < 1:
             log.error("BLEC_CMD_SET_LIGHT_LEVEL: payload too short")
             return
-        level = payload[0]
-        log.debug("level %d" % level)
-        await led_strip.power(True, level)
+        light_level = payload[0]
+        await led_strip.power(True, light_level)
                 
     elif cmd == BLEC_CMD_SET_LIGHT_STATE:
         if len(payload) < 1:
@@ -136,8 +149,6 @@ async def blec_cmd_callback(cmd: int, payload: bytes) -> None:
         await led_strip.power(state)
 
     elif cmd == BLEC_CMD_SETCFG:
-        log.debug("config received payload: %s" % payload)
-
         try:
             merged_config = cfg.merge_config(payload.decode("utf-8"))
             log.debug("config received: %s" % merged_config)
@@ -242,10 +253,11 @@ async def main() -> None:
         flog.info("main(): Initialized")
         
         try:
+            motion_radar.start(poll_interval_ms=100)
             main_tasks = [
                 asyncio.create_task(watch_task(status_led.start(), "status_led.start")),
                 asyncio.create_task(watch_task(blec.start(), "blec.start")),
-                asyncio.create_task(watch_task(motion_radar.start(poll_interval_ms=10), "motion_radar.start")),
+                asyncio.create_task(watch_task(motion_radar_event_loop(), "motion_radar.event_loop")),
             ]
             await asyncio.sleep_ms(100)
         except Exception as e:
@@ -264,8 +276,7 @@ async def main() -> None:
 
             if lux <= ambient_light_threshold:
                 if not motion_radar.is_running():
-                    mr_task = asyncio.create_task(watch_task(motion_radar.start(poll_interval_ms=10), "motion_radar.start"))
-                    main_tasks.append(mr_task)
+                    motion_radar.start(poll_interval_ms=10)
                     log.debug("Reading radar: back on")
                     blec.notify(BLEC_NOTIFICATION_TEXT, "Reading radar: back on".encode())
             elif lux > ambient_light_threshold + 20:

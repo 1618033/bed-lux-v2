@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 import asyncio 
 import time
+import _thread
 
 from defs import Any, Optional, List, Dict
 from machine import Pin, UART
 from drivers.hlk_ld2412 import HLKLD2412
-from mylib.helpers import is_awaitable, is_coroutine
+from mylib.helpers import is_awaitable
 
 log = logging.getLogger("[MotionRadar]")
 log.setLevel(logging.DEBUG)
@@ -42,13 +43,18 @@ class MotionRadar:
         self._motion_state = False
         self._motion_hold_time = motion_hold_time
         self._last_motion_ticks: Optional[int] = None
+        self._last_motion_event_ticks: Optional[int] = None
         self._last_report: Optional[Dict[str, Any]] = None
         self._energy_threshold = energy_threshold
+        self._lock = _thread.allocate_lock()
+        self._thread_id: Optional[int] = None
+        self._worker_exception: Optional[Exception] = None
+        self._pending_motion_events: List[tuple[bool, List[int]]] = []
 
     def motion_event_handler(self, state: bool, energies: List) -> None:
         pass
 
-    async def poll(self):
+    def poll_once(self) -> None:
         report = self.read_report()
         if report is None:
             return
@@ -57,36 +63,58 @@ class MotionRadar:
             self._radar.enable_engineering_mode()
             return
         
+        now = time.ticks_ms()
+
+        with self._lock:
+            energy_threshold = self._energy_threshold
+            current_motion_state = self._motion_state
+            last_motion_ticks = self._last_motion_ticks
+            last_motion_event_ticks = self._last_motion_event_ticks
+
         motion_detected = False
 
         for energy in report["moving_gate_energies"]:
-            if energy > self._energy_threshold:
+            if energy > energy_threshold:
                 motion_detected = True
-                self._last_motion_ticks = time.ticks_ms()
+                last_motion_ticks = now
                 break
 
         if (
             not motion_detected
             and self._motion_hold_time > 0
-            and self._last_motion_ticks is not None
+            and last_motion_ticks is not None
         ):
-            elapsed = time.ticks_diff(time.ticks_ms(), self._last_motion_ticks)
+            elapsed = time.ticks_diff(now, last_motion_ticks)
             if elapsed < self._motion_hold_time:
                 motion_detected = True
+            else:
+                last_motion_ticks = None
+        elif not motion_detected:
+            last_motion_ticks = None
 
-        if motion_detected == self._motion_state:
-            return
+        emit_event = motion_detected != current_motion_state
+        if (
+            not emit_event
+            and motion_detected
+            and self._motion_hold_time > 0
+            and last_motion_event_ticks is not None
+        ):
+            elapsed = time.ticks_diff(now, last_motion_event_ticks)
+            if elapsed >= self._motion_hold_time:
+                emit_event = True
 
-        self._motion_state = motion_detected
+        with self._lock:
+            self._last_motion_ticks = last_motion_ticks
 
-        try:
-            res = self.motion_event_handler(motion_detected, report['moving_gate_energies'])
-            if is_awaitable(res):
-                await res  # pyright: ignore[reportGeneralTypeIssues]
-        except Exception as e:
-            log.error("Error in callback for MotionRadar.motion_detected: %s" % (e))
-            raise
-        
+            if not emit_event:
+                return
+
+            self._motion_state = motion_detected
+            self._last_motion_event_ticks = now if motion_detected else None
+            self._pending_motion_events.append(
+                (motion_detected, list(report["moving_gate_energies"]))
+            )
+
         log.debug(report['moving_gate_energies'])
 
     def initialize(self) -> bool:
@@ -110,21 +138,51 @@ class MotionRadar:
     def is_running(self):
         return self._running
 
-    async def start(self, poll_interval_ms=10):
+    def start(self, poll_interval_ms=10) -> bool:
         if self._running:
-            return
+            return False
+
+        if not self._initialized:
+            raise OSError("LD2412 radar is not available")
 
         self._running = True
         log.info("LD2412 radar in monitoring mode. Polling every %dms" % poll_interval_ms)
+        self._thread_id = _thread.start_new_thread(self._thread_main, (poll_interval_ms,))
+        return True
+
+    def _thread_main(self, poll_interval_ms: int) -> None:
         try:
             while self._running:
-                await self.poll()
-                await asyncio.sleep_ms(poll_interval_ms)
-        except asyncio.CancelledError:
-            log.info("Pin monitor task cancelled")
+                self.poll_once()
+                time.sleep_ms(poll_interval_ms)
+        except Exception as exc:
+            self._worker_exception = exc
+            log.error("Radar worker failed: %s" % exc)
             raise
         finally:
             self._running = False
+            self._thread_id = None
+            log.info("Radar worker stopped")
+
+    async def event_loop(self, poll_interval_ms: int = 20) -> None:
+        while True:
+            worker_exception = self.consume_worker_exception()
+            if worker_exception is not None:
+                raise worker_exception
+
+            event = self.consume_pending_motion_event()
+            if event is not None:
+                state, energies = event
+                res = self.motion_event_handler(state, energies)
+                if is_awaitable(res):
+                    await res  # pyright: ignore[reportGeneralTypeIssues]
+                continue
+
+            if not self._running:
+                await asyncio.sleep_ms(100)
+                continue
+
+            await asyncio.sleep_ms(poll_interval_ms)
 
     def stop(self):
         """Stop the monitoring loop."""
@@ -134,21 +192,24 @@ class MotionRadar:
         return self._initialized
 
     def read_info(self):
-        if not self._initialized and not self.start():
+        if not self._initialized:
             raise OSError("LD2412 radar is not available")
         return self._radar.read_all_info()
 
     def get_last_report(self) -> None | Dict[str, Any]:
-        return self._last_report
+        with self._lock:
+            return self._last_report
 
     def get_motion_state(self) -> bool:
-        return self._motion_state
+        with self._lock:
+            return self._motion_state
 
     def read_report(self, timeout_ms: Optional[int] = None):
-        if not self._initialized and not self.start():
+        if not self._initialized:
             raise OSError("LD2412 radar is not available")
         report = self._radar.read_report(timeout_ms=timeout_ms)
-        self._last_report = report
+        with self._lock:
+            self._last_report = report
         return report
 
     def is_motion_detected(self, timeout_ms: Optional[int] = None) -> bool:
@@ -156,7 +217,21 @@ class MotionRadar:
         return bool(report and report.get("has_target"))
 
     def set_energy_threshold(self, energy_threshold: int):
-        self._energy_threshold = energy_threshold
+        with self._lock:
+            self._energy_threshold = energy_threshold
+
+    def consume_pending_motion_event(self) -> None | tuple[bool, List[int]]:
+        with self._lock:
+            if not self._pending_motion_events:
+                return None
+
+            return self._pending_motion_events.pop(0)
+
+    def consume_worker_exception(self) -> Optional[Exception]:
+        with self._lock:
+            exc = self._worker_exception
+            self._worker_exception = None
+            return exc
 
     @property
     def driver(self) -> HLKLD2412:

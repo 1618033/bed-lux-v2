@@ -18,7 +18,7 @@ class LEDStrip:
         pin: int | Pin = PIN_LEDSTRIP_PWM,
         freq: int = 1000,
         fade_time_ms: int = 500,
-        step_ms: int = 20,
+        step_ms: int = 10,
         max_duty: int = 65535,
     ) -> None:
         self._pin = pin if isinstance(pin, Pin) else Pin(pin, Pin.OUT)
@@ -40,6 +40,12 @@ class LEDStrip:
 
     def duty(self) -> int:
         return self._duty
+
+    def get_target_level(self) -> int:
+        return self._current_target_level
+
+    def get_state(self) -> bool:
+        return self._current_state
 
     def set_duty(self, duty: int) -> None:
         duty = max(0, min(self._max_duty, duty))
@@ -65,6 +71,7 @@ class LEDStrip:
                 break
             duty = start_duty + (delta * step) // steps
             self.set_duty(duty)
+            # log.debug("set_duty to %d" % duty)
             await asyncio.sleep_ms(self._step_ms)
 
         self.set_duty(target_duty)
