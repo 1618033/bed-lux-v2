@@ -25,7 +25,7 @@ pin_rgb_led = Pin(PIN_RGB_LED, Pin.OUT)
 status_led = StatusLED(pin_rgb_led)
 status_led.status(RGBLED_STATUS_BOOTING, True)
 
-led_strip = LEDStrip(fade_time_ms=1000)
+led_strip = LEDStrip(step_ms=1,fade_time_ms=500)
 
 sta = network.WLAN(network.STA_IF)
 ap = network.WLAN(network.AP_IF)

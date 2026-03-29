@@ -77,7 +77,7 @@ async def power_led_strip(state: bool, energies: List) -> None:
     
     if state == False:
         log.debug("Turning LED strip off")
-        notification = "⚫ Turning LED strip off [light_level=%d] [ambient_light=%d] [energies=[%s]]" % (light_level, ambient_light, energies_text)
+        notification = "⚫ LED strip off [light_level=%d] [ambient_light=%d] [energies=[%s]]" % (light_level, ambient_light, energies_text)
         blec.notify(BLEC_NOTIFICATION_TEXT, notification.encode())
         await led_strip.power(False)
         timer_light.cancel()
@@ -87,7 +87,7 @@ async def power_led_strip(state: bool, energies: List) -> None:
 
         if led_strip.get_state() != state or led_strip.get_target_level() != light_level:
             log.debug("Turning LED strip on")
-            notification = "⚪ Turning LED strip on [light_level=%d] [ambient_light=%d] [energies=[%s]]" % (light_level, ambient_light, energies_text)
+            notification = "⚪ LED strip on [light_level=%d] [ambient_light=%d] [energies=[%s]]" % (light_level, ambient_light, energies_text)
             blec.notify(BLEC_NOTIFICATION_TEXT, notification.encode())
             await led_strip.power(True, light_level)
         else:
