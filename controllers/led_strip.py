@@ -68,10 +68,9 @@ class LEDStrip:
 
         for step in range(1, steps + 1):
             if self._interrupt_event.is_set():
-                break
+                return
             duty = start_duty + (delta * step) // steps
             self.set_duty(duty)
-            # log.debug("set_duty to %d" % duty)
             await asyncio.sleep_ms(self._step_ms)
 
         self.set_duty(target_duty)

@@ -37,12 +37,14 @@ flog: FileLogger
 lux_sensor: SensorLUX
 motion_radar: MotionRadar
 
-main_tasks: List[asyncio.Task[Any]]
+main_tasks: Optional[List[asyncio.Task[Any]]] = None
 last_task_exception: Optional[Exception]
 failed_task_name: Optional[str] = None
 
 log = logging.getLogger("[Main]")
 log.setLevel(logging.DEBUG)
+
+quit_event: asyncio.Event
 
 @safe_call(log)
 def get_sensors_status() -> bytes | None:
@@ -131,7 +133,7 @@ async def blec_cmd_callback(cmd: int, payload: bytes) -> None:
                 log.exception("Error stopping wireless services: %s" % e)
         if subcmd == BLEC_SUBCMD_SYSTEM_RESET:
             log.info("Performing a hard reset...")
-            await cleanup()
+            await cleanup(True)
             machine.reset()
 
     elif cmd == BLEC_CMD_SET_LIGHT_LEVEL:
@@ -187,10 +189,11 @@ async def blec_on_stop() -> None:
     status_led.status(RGBLED_STATUS_BTOFF)
 
 def initialize_variables() -> None:
-    global timer_light, flog, status_led
+    global timer_light, flog, quit_event
 
     timer_light = OneShotTimer()
     flog = FileLogger("log.txt", max_bytes=100_000, backups=2)
+    quit_event = asyncio.Event()
 
 def initialize_blec() -> None:    
     global blec
@@ -267,12 +270,16 @@ async def main() -> None:
         status_led.status(RGBLED_STATUS_BOOTED)
 
         memory_log_counter = 0
+
         
-        while True:
+        while not quit_event.is_set():
             await asyncio.sleep_ms(500)
+            if not quit_event.is_set():
+                break
 
             ambient_light_threshold = cfg.get("ambient_light_threshold")
-            lux = lux_sensor.read_lux()
+            # lux = lux_sensor.read_lux()
+            lux = 100
 
             if lux <= ambient_light_threshold:
                 if not motion_radar.is_running():
@@ -310,9 +317,15 @@ async def main() -> None:
         await cleanup()
 
 
-async def cleanup():
+async def cleanup(manual: bool=False):
     log.info("Cleaning up...")
+    quit_event.set()
+
     # Cancel all tasks
+    if not main_tasks:
+        log.info("No tasks have been registed.")
+        return
+
     for task in main_tasks:
         if task and not task.done():
             task.cancel()
@@ -337,6 +350,10 @@ async def cleanup():
 
     log.info("Cleanup complete")
 
+    if not manual:
+        app_error("Application crashed")
+
+
 
 async def watch_task(coro, name: str) -> None:
     global last_task_exception, failed_task_name
@@ -354,8 +371,10 @@ def app_error(error: str, exception: Optional[Exception]=None) -> None:
     if exception:
         status_led.status(RGBLED_STATUS_ERROR)
         flog.exception("🚨 %s" % error, exception)
+        log.exception("🚨 %s" % error)
     else:
         flog.error(error)
+        log.error(error)
 
 
 if __name__ == '__main__':
