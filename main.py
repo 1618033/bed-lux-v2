@@ -274,12 +274,11 @@ async def main() -> None:
         
         while not quit_event.is_set():
             await asyncio.sleep_ms(500)
-            if not quit_event.is_set():
+            if quit_event.is_set():
                 break
 
             ambient_light_threshold = cfg.get("ambient_light_threshold")
-            # lux = lux_sensor.read_lux()
-            lux = 100
+            lux = lux_sensor.read_lux()
 
             if lux <= ambient_light_threshold:
                 if not motion_radar.is_running():
@@ -303,9 +302,6 @@ async def main() -> None:
             if memory_log_counter % 1200 == 0:  # Every 10 minutes
                 text = log_memory_status(log, flog)
                 blec.notify(BLEC_NOTIFICATION_TEXT, text.encode())
-                
-
-
     except asyncio.CancelledError:
         log.info("Main loop cancelled")
         raise
@@ -318,7 +314,7 @@ async def main() -> None:
 
 
 async def cleanup(manual: bool=False):
-    log.info("Cleaning up...")
+    log.info(f"Cleaning up [manual={manual}]...")
     quit_event.set()
 
     # Cancel all tasks

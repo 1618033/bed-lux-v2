@@ -19,13 +19,13 @@ log_memory_status(log, simple=False)
 pin_scl = Pin(PIN_SCL)
 pin_sda = Pin(PIN_SDA)
 
-pin_ledstrip_pwm = Pin(PIN_LEDSTRIP_PWM, Pin.OUT)
+# pin_ledstrip_pwm = Pin(PIN_LEDSTRIP_PWM, Pin.OUT)
 pin_rgb_led = Pin(PIN_RGB_LED, Pin.OUT)
 
 status_led = StatusLED(pin_rgb_led)
 status_led.status(RGBLED_STATUS_BOOTING, True)
 
-led_strip = LEDStrip(step_ms=1,fade_time_ms=500)
+led_strip = LEDStrip(pin=PIN_LEDSTRIP_PWM, step_ms=1, fade_time_ms=500, freq=500)
 
 sta = network.WLAN(network.STA_IF)
 ap = network.WLAN(network.AP_IF)

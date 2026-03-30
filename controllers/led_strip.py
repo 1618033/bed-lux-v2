@@ -15,7 +15,7 @@ log.setLevel(logging.DEBUG)
 class LEDStrip:
     def __init__(
         self,
-        pin: int | Pin = PIN_LEDSTRIP_PWM,
+        pin: int | Pin = 3,
         freq: int = 1000,
         fade_time_ms: int = 500,
         step_ms: int = 10,

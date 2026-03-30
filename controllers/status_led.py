@@ -42,8 +42,6 @@ class StatusLED:
             RGBLED_STATUS_BTOFF: (0, 1, 0),
         }
 
-        self.log = logging.getLogger("[StatusLED]")
-
     def _get_color_for_status(self, status: int) -> Tuple[int, int, int]:
         return self._status_colors[status]
 
@@ -96,7 +94,6 @@ class StatusLED:
                     await asyncio.sleep_ms(200)
                     continue
 
-
                 self._write_color(self._scale_color(self._get_color_for_status(self._status), self._brightness))
 
                 self._brightness += self._direction
@@ -110,5 +107,5 @@ class StatusLED:
                 await asyncio.sleep_ms(self.interval_ms)
         except asyncio.CancelledError:
             self._write_color(self._get_color_for_status(RGBLED_STATUS_OFF))
-            self.log.info("Status LED task cancelled")
+            log.info("Status LED task cancelled")
             raise
